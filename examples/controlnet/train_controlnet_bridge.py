@@ -258,7 +258,7 @@ def parse_args():
     parser.add_argument(
         "--resolution",
         type=int,
-        default=256,
+        default=512,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
@@ -276,7 +276,7 @@ def parse_args():
     parser.add_argument(
         "--checkpointing_steps",
         type=int,
-        default=100000,
+        default=50000,
         help=("Save a checkpoint of the training state every X updates."),
     )
     parser.add_argument(
@@ -361,7 +361,7 @@ def parse_args():
     parser.add_argument(
         "--train_data_dir",
         type=str,
-        default="gs://oier-v4-bucket/bridge_trajectory_filtered2/bridge_dataset/1.0.0",
+        default="gs://pranav-europe-west4/datasets/bridge_with_sketches",
         help=(
             "A folder containing the training dataset. By default it will use `load_dataset` method to load a custom dataset from the folder."
             "Folder must contain a dataset script as described here https://huggingface.co/docs/datasets/dataset_script) ."
@@ -416,14 +416,9 @@ def parse_args():
     parser.add_argument(
         "--gradient_accumulation_steps", type=int, default=1, help="Number of steps to accumulate gradients over"
     )
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
 
     args = parser.parse_args()
     args.output_dir = args.output_dir.replace("{timestamp}", time.strftime("%Y%m%d_%H%M%S"))
-
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
 
     # Sanity checks
     if args.dataset_name is None and args.train_data_dir is None:
@@ -466,27 +461,19 @@ def get_dataset(args, tokenizer):
     dataset_iterator = dataset.iterator()
 
     def tokenize_text(batch):
+        language_instr_list = batch["language"].tolist()
+        language_instr_list = [s.decode("ASCII") for s in language_instr_list]
         tokenized = tokenizer(
-            batch["language"], max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
+            language_instr_list, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
         ).input_ids
-        tokenized = torch.stack(tokenized).numpy()
 
-        batch["input_ids"] = tokenized
+        batch["input_ids"] = tokenized.numpy()
+        del batch["language"]
         return batch
     
     dataset_iterator = map(tokenize_text, dataset_iterator)
 
     return dataset_iterator
-
-def tokenize_text(batch, tokenizer):
-    tokenized = tokenizer(
-        batch["language"], max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
-    ).input_ids
-    tokenized = torch.stack(tokenized).numpy()
-
-    batch["input_ids"] = tokenized
-    return batch
-
 
 # def make_train_dataset(args, tokenizer, batch_size=None):
 #     # Get the datasets: you can either provide your own training and evaluation files (see below)
@@ -831,6 +818,8 @@ def main():
 
         def compute_loss(params, minibatch, sample_rng):
             # Convert images to latent space
+            print("###########")
+            print(minibatch["pixel_values"].shape)
             vae_outputs = vae.apply(
                 {"params": vae_params}, minibatch["pixel_values"], deterministic=True, method=vae.encode
             )
