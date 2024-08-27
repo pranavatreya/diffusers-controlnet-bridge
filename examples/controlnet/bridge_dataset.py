@@ -162,6 +162,9 @@ class BridgeDataset:
         traj["pixel_values"] = (traj["pixel_values"] / 255.0 - 0.5) / 0.5
         traj["conditioning_pixel_values"] = (traj["conditioning_pixel_values"] / 255.0 - 0.5) / 0.5
 
+        traj["pixel_values"] = tf.transpose(traj["pixel_values"], perm=[0, 3, 1, 2])
+        traj["conditioning_pixel_values"] = tf.transpose(traj["conditioning_pixel_values"], perm=[0, 3, 1, 2])
+
         return traj
 
     def iterator(self):
