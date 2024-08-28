@@ -244,7 +244,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="gs://pranav-europe-west4/log/human_video/controlnet_training/{timestamp}",
+        default="/raid/users/pranav/human_video_proj/log/controlnet_training/{timestamp}",
         help="The output directory where the model predictions and checkpoints will be written. "
         "Can contain placeholders: {timestamp}.",
     )
@@ -361,7 +361,7 @@ def parse_args():
     parser.add_argument(
         "--train_data_dir",
         type=str,
-        default="gs://pranav-europe-west4/datasets/bridge_with_sketches",
+        default="/raid/users/pranav/human_video_proj/bridge_with_sketches",
         help=(
             "A folder containing the training dataset. By default it will use `load_dataset` method to load a custom dataset from the folder."
             "Folder must contain a dataset script as described here https://huggingface.co/docs/datasets/dataset_script) ."
@@ -419,6 +419,8 @@ def parse_args():
 
     args = parser.parse_args()
     args.output_dir = args.output_dir.replace("{timestamp}", time.strftime("%Y%m%d_%H%M%S"))
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
     # Sanity checks
     if args.dataset_name is None and args.train_data_dir is None:
@@ -462,7 +464,7 @@ def get_dataset(args, tokenizer):
 
     def tokenize_text(batch):
         language_instr_list = batch["language"].tolist()
-        language_instr_list = [s.decode("ASCII") for s in language_instr_list]
+        language_instr_list = [s.decode("utf-8") for s in language_instr_list]
         tokenized = tokenizer(
             language_instr_list, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
         ).input_ids
@@ -818,8 +820,6 @@ def main():
 
         def compute_loss(params, minibatch, sample_rng):
             # Convert images to latent space
-            print("###########")
-            print(minibatch["pixel_values"].shape)
             vae_outputs = vae.apply(
                 {"params": vae_params}, minibatch["pixel_values"], deterministic=True, method=vae.encode
             )
@@ -891,7 +891,7 @@ def main():
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     snr_loss_weights = snr_loss_weights / (snr + 1)
 
-                loss = loss * snr_loss_weights
+                loss = loss * snr_loss_weights[:, None, None, None]
 
             loss = loss.mean()
 
@@ -1002,26 +1002,26 @@ def main():
     if args.profile_memory:
         jax.profiler.save_device_memory_profile(os.path.join(args.output_dir, "memory_initial.prof"))
     t00 = t0 = time.monotonic()
-    for train_iter in tqdm(range(args.max_train_steps)):
-        # ======================== Training ================================
+    # ======================== Training ================================
 
-        train_metrics = []
-        train_metric = None
+    train_metrics = []
+    train_metric = None
 
-        # steps_per_epoch = (
-        #     args.max_train_samples // total_train_batch_size
-        #     if args.streaming or args.max_train_samples
-        #     else len(train_dataset) // total_train_batch_size
-        # )
-        # train_step_progress_bar = tqdm(
-        #     total=steps_per_epoch,
-        #     desc="Training...",
-        #     position=1,
-        #     leave=False,
-        #     disable=jax.process_index() > 0,
-        # )
+    # steps_per_epoch = (
+    #     args.max_train_samples // total_train_batch_size
+    #     if args.streaming or args.max_train_samples
+    #     else len(train_dataset) // total_train_batch_size
+    # )
+    # train_step_progress_bar = tqdm(
+    #     total=steps_per_epoch,
+    #     desc="Training...",
+    #     position=1,
+    #     leave=False,
+    #     disable=jax.process_index() > 0,
+    # )
 
-        # train
+    # train
+    with tqdm(total=args.max_train_steps) as pbar:
         for batch in train_dataloader:
             if args.profile_steps and global_step == 1:
                 train_metric["loss"].block_until_ready()
@@ -1073,9 +1073,7 @@ def main():
                     params=get_params_to_save(state.params),
                 )
 
-        train_metric = jax_utils.unreplicate(train_metric)
-        # train_step_progress_bar.close()
-        # epochs.write(f"Epoch... ({epoch + 1}/{args.num_train_epochs} | Loss: {train_metric['loss']})")
+            pbar.update(1)
 
     # Final validation & store model.
     if jax.process_index() == 0:
